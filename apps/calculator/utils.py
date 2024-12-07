@@ -1,74 +1,119 @@
-# import torch
-# from transformers import pipeline, BitsAndBytesConfig, AutoProcessor, LlavaForConditionalGeneration
-# from PIL import Image
+# apps/calculator/utils.py
 
-# # quantization_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16)
-# quantization_config = BitsAndBytesConfig(
-#     load_in_4bit=True,
-#     bnb_4bit_compute_dtype=torch.float16
-# )
-
-
-# model_id = "llava-hf/llava-1.5-7b-hf"
-# processor = AutoProcessor.from_pretrained(model_id)
-# model = LlavaForConditionalGeneration.from_pretrained(model_id, quantization_config=quantization_config, device_map="auto")
-# # pipe = pipeline("image-to-text", model=model_id, model_kwargs={"quantization_config": quantization_config})
-
-# def analyze_image(image: Image):
-#     prompt = "USER: <image>\nAnalyze the equation or expression in this image, and return answer in format: {expr: given equation in LaTeX format, result: calculated answer}"
-
-#     inputs = processor(prompt, images=[image], padding=True, return_tensors="pt").to("cuda")
-#     for k, v in inputs.items():
-#         print(k,v.shape)
-
-#     output = model.generate(**inputs, max_new_tokens=20)
-#     generated_text = processor.batch_decode(output, skip_special_tokens=True)
-#     for text in generated_text:
-#         print(text.split("ASSISTANT:")[-1])
-
-import google.generativeai as genai
-import ast
 import json
-from PIL import Image
+import ast
+from PIL import Image, ImageFilter, ImageOps, ImageEnhance
 from constants import GEMINI_API_KEY
+import google.generativeai as genai
 
-genai.configure(api_key=GEMINI_API_KEY)
+def preprocess_image(img: Image) -> Image:
+    """
+    Preprocess the input image to enhance clarity for better AI interpretation.
+
+    Steps:
+    1. Convert to grayscale.
+    2. Invert colors to have a white background with black text.
+    3. Enhance contrast to make the drawing more prominent.
+
+    Args:
+        img (Image): PIL Image object to be preprocessed.
+
+    Returns:
+        Image: Preprocessed PIL Image object.
+    """
+    # Convert to grayscale
+    img = img.convert('L')
+
+    # Invert colors (optional based on your drawing background)
+    img = ImageOps.invert(img)
+
+    # Enhance contrast
+    enhancer = ImageEnhance.Contrast(img)
+    img = enhancer.enhance(2)
+
+    return img
 
 def analyze_image(img: Image, dict_of_vars: dict):
-    model = genai.GenerativeModel(model_name="gemini-1.5-flash")
-    dict_of_vars_str = json.dumps(dict_of_vars, ensure_ascii=False)
-    prompt = (
-        f"You have been given an image with some mathematical expressions, equations, or graphical problems, and you need to solve them. "
-        f"Note: Use the PEMDAS rule for solving mathematical expressions. PEMDAS stands for the Priority Order: Parentheses, Exponents, Multiplication and Division (from left to right), Addition and Subtraction (from left to right). Parentheses have the highest priority, followed by Exponents, then Multiplication and Division, and lastly Addition and Subtraction. "
-        f"For example: "
-        f"Q. 2 + 3 * 4 "
-        f"(3 * 4) => 12, 2 + 12 = 14. "
-        f"Q. 2 + 3 + 5 * 4 - 8 / 2 "
-        f"5 * 4 => 20, 8 / 2 => 4, 2 + 3 => 5, 5 + 20 => 25, 25 - 4 => 21. "
-        f"YOU CAN HAVE FIVE TYPES OF EQUATIONS/EXPRESSIONS IN THIS IMAGE, AND ONLY ONE CASE SHALL APPLY EVERY TIME: "
-        f"Following are the cases: "
-        f"1. Simple mathematical expressions like 2 + 2, 3 * 4, 5 / 6, 7 - 8, etc.: In this case, solve and return the answer in the format of a LIST OF ONE DICT [{{'expr': given expression, 'result': calculated answer}}]. "
-        f"2. Set of Equations like x^2 + 2x + 1 = 0, 3y + 4x = 0, 5x^2 + 6y + 7 = 12, etc.: In this case, solve for the given variable, and the format should be a COMMA SEPARATED LIST OF DICTS, with dict 1 as {{'expr': 'x', 'result': 2, 'assign': True}} and dict 2 as {{'expr': 'y', 'result': 5, 'assign': True}}. This example assumes x was calculated as 2, and y as 5. Include as many dicts as there are variables. "
-        f"3. Assigning values to variables like x = 4, y = 5, z = 6, etc.: In this case, assign values to variables and return another key in the dict called {{'assign': True}}, keeping the variable as 'expr' and the value as 'result' in the original dictionary. RETURN AS A LIST OF DICTS. "
-        f"4. Analyzing Graphical Math problems, which are word problems represented in drawing form, such as cars colliding, trigonometric problems, problems on the Pythagorean theorem, adding runs from a cricket wagon wheel, etc. These will have a drawing representing some scenario and accompanying information with the image. PAY CLOSE ATTENTION TO DIFFERENT COLORS FOR THESE PROBLEMS. You need to return the answer in the format of a LIST OF ONE DICT [{{'expr': given expression, 'result': calculated answer}}]. "
-        f"5. Detecting Abstract Concepts that a drawing might show, such as love, hate, jealousy, patriotism, or a historic reference to war, invention, discovery, quote, etc. USE THE SAME FORMAT AS OTHERS TO RETURN THE ANSWER, where 'expr' will be the explanation of the drawing, and 'result' will be the abstract concept. "
-        f"Analyze the equation or expression in this image and return the answer according to the given rules: "
-        f"Make sure to use extra backslashes for escape characters like \\f -> \\\\f, \\n -> \\\\n, etc. "
-        f"Here is a dictionary of user-assigned variables. If the given expression has any of these variables, use its actual value from this dictionary accordingly: {dict_of_vars_str}. "
-        f"DO NOT USE BACKTICKS OR MARKDOWN FORMATTING. "
-        f"PROPERLY QUOTE THE KEYS AND VALUES IN THE DICTIONARY FOR EASIER PARSING WITH Python's ast.literal_eval."
-    )
-    response = model.generate_content([prompt, img])
-    print(response.text)
-    answers = []
+    """
+    Analyze the drawn mathematical expression from the provided image using GenAI.
+
+    This function preprocesses the image, generates a prompt combining the image and variables,
+    sends it to the GenAI model, parses the response, and returns structured results.
+
+    Args:
+        img (Image): PIL Image object containing the drawn mathematical expression.
+        dict_of_vars (dict): Dictionary of variables to be used in evaluating the expression.
+
+    Returns:
+        list or dict: 
+            - On success: List of dictionaries containing 'expr', 'result', and 'assign' keys.
+            - On failure: Dictionary with 'message' and 'status' keys indicating the error.
+    """
     try:
-        answers = ast.literal_eval(response.text)
+        # Configure GenAI with the provided API key
+        genai.configure(api_key=GEMINI_API_KEY)
     except Exception as e:
-        print(f"Error in parsing response from Gemini API: {e}")
-    print('returned answer ', answers)
-    for answer in answers:
-        if 'assign' in answer:
-            answer['assign'] = True
-        else:
-            answer['assign'] = False
-    return answers
+        print(f"Error configuring GenAI: {e}")
+        return {"message": "Internal server error during GenAI configuration.", "status": "error"}
+
+    try:
+        # Preprocess the image for better clarity
+        img = preprocess_image(img)
+        print("Image preprocessed for better clarity.")
+
+        # Initialize the GenAI model
+        model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+
+        # Serialize the variables dictionary to a JSON string
+        dict_of_vars_str = json.dumps(dict_of_vars, ensure_ascii=False)
+
+        # Generate the prompt for GenAI
+        prompt = f"""
+Analyze the following handwritten mathematical expression from the provided image and evaluate it based on the given variables.
+
+Variables: {dict_of_vars_str}
+
+Image: [Please refer to the attached image]
+
+Please provide the expression, the result, and indicate whether it involves an assignment.
+
+Respond in the following JSON format:
+
+[
+    {{
+        "expr": "expression as string",
+        "result": "result as string",
+        "assign": true or false
+    }},
+    ...
+]
+"""
+        print("Generated Prompt:", prompt[:500] + '...')  # Log first 500 characters for brevity
+
+        # Send the prompt and image to the GenAI model
+        response = model.generate_content([prompt, img])
+        print(f"GenAI Response: {response.text[:500]}...")  # Log first 500 characters for brevity
+
+        answers = []
+
+        try:
+            # Clean the response text by removing backticks
+            cleaned_response_text = response.text.replace('```json', '').replace('```', '').strip()
+            # Parse the cleaned response text into a Python list
+            answers = json.loads(cleaned_response_text)
+            print("Parsed Answers:", answers)
+        except Exception as e:
+            print(f"Error parsing GenAI response: {e}")
+            return {"message": "Failed to parse AI response.", "status": "error"}
+
+        # Process each answer to ensure the 'assign' flag is present
+        for answer in answers:
+            if 'assign' not in answer:
+                answer['assign'] = False
+
+        print("Final Answers with Assign Flags:", answers)
+        return answers
+
+    except Exception as e:
+        print(f"Error in analyze_image function: {e}")
+        return {"message": "Internal server error during image analysis.", "status": "error"}
