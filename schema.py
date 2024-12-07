@@ -1,3 +1,4 @@
+# apps/calculator/schema.py
 from pydantic import BaseModel
 
 class ImageData(BaseModel):
