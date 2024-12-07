@@ -176,3 +176,9 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
 
+# Environment Variables
+.env
+
+# Backup Directory
+backup_env/
+
